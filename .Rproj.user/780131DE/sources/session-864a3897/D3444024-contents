@@ -1,0 +1,14 @@
+
+```{r}
+library(tidyverse)
+library(here)
+```
+
+```{r}
+df <- readRDS(here("data", "database_brasileirao_a.rds"))
+```
+
+```{r}
+
+```
+
