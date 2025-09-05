@@ -1,0 +1,45 @@
+
+```{r}
+library(tidyverse)
+library(here)
+library(zoo)
+library(corrplot)
+library(factoextra)
+```
+
+```{r}
+liga <- paste0("brasileirao_a", ".rds")
+
+train_test <- readRDS(here("data", "train_test", liga))
+```
+
+
+```{r}
+data = train_test$train |> 
+  select(-match_id, -rodada, -gols_casa, -gols_fora) |> 
+  select(where(is.numeric)) |> 
+  mutate(across(everything(), ~ ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x)))
+
+PCA = prcomp(data_scaled, scale. = TRUE)
+```
+
+```{r}
+summary(PCA)
+```
+
+
+```{r}
+eig_vals <- (PCA$sdev)^2
+sum(eig_vals > 1)
+```
+
+```{r}
+loadings <- PCA$rotation
+```
+
+
+```{r}
+# Scree plot
+fviz_eig(PCA)
+```
+

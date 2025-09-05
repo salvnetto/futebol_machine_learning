@@ -1,0 +1,122 @@
+```{r}
+library(tidyverse)
+library(here)
+library(tidymodels)
+```
+
+```{r}
+liga <- paste0("brasileirao_a", ".rds")
+
+train_test <- readRDS(here("data", "train_test", liga))
+```
+
+# Regressao
+
+```{r}
+casa_recipe <- recipe(gols_casa ~ ., data = train_test$train) |> 
+  step_rm(match_id, data, gols_fora, resultado) |> 
+  step_impute_mean(all_numeric_predictors()) |> 
+  step_normalize(all_numeric_predictors()) |> 
+  step_pca(all_numeric_predictors(), threshold = 0.80) |> 
+  step_novel(arbitro) |> 
+  step_dummy(all_nominal_predictors())
+
+fora_recipe <- recipe(gols_fora ~ ., data = train_test$train) |> 
+  step_rm(match_id, data, gols_casa, resultado) |> 
+  step_impute_mean(all_numeric_predictors()) |> 
+  step_normalize(all_numeric_predictors()) |> 
+  step_pca(all_numeric_predictors(), threshold = 0.80) |> 
+  step_novel(arbitro) |> 
+  step_dummy(all_nominal_predictors())
+```
+
+```{r}
+rf_model <- rand_forest(mode = "regression") |> 
+  set_engine("ranger")
+```
+
+```{r}
+casa_workflow <- workflow() |> 
+  add_recipe(casa_recipe) |> 
+  add_model(rf_model)
+
+fora_workflow <- workflow() |> 
+  add_recipe(fora_recipe) |> 
+  add_model(rf_model)
+```
+
+```{r}
+casa_fit <- casa_workflow |> 
+  fit(data = train_test$train)
+
+fora_fit <- fora_workflow |> 
+  fit(data = train_test$train)
+```
+
+```{r}
+casa_preds <- predict(casa_fit, train_test$test) |> bind_cols(train_test$test |> select(gols_casa))
+fora_preds <- predict(fora_fit, train_test$test) |> bind_cols(train_test$test |> select(gols_fora))
+
+# RMSE
+rmse(casa_preds, truth = gols_casa, estimate = .pred)
+rmse(fora_preds, truth = gols_fora, estimate = .pred)
+# R-squared
+rsq(casa_preds, truth = gols_casa, estimate = .pred)
+rsq(fora_preds, truth = gols_fora, estimate = .pred)
+```
+
+```{r}
+preds <- bind_cols(casa_preds |> rename(pred_casa = .pred), fora_preds |> rename(pred_fora = .pred)) |> 
+  mutate(
+    pred_result = case_when(
+      round(pred_casa) > round(pred_fora) ~ "W",
+      round(pred_casa) == round(pred_fora) ~ "D",
+      round(pred_casa) < round(pred_fora) ~ "L",
+    ),
+    truth_result = case_when(
+      gols_casa > gols_fora ~ "W",
+      gols_casa == gols_fora ~ "D",
+      gols_casa < gols_fora ~ "L",
+    ),
+    acc = ifelse(pred_result == truth_result, 1, 0)
+  )
+
+mean(preds$acc)
+```
+# Classificacao
+
+```{r}
+rf_recipe <- recipe(resultado ~ ., data = train_test$train) |> 
+  step_rm(match_id, data, gols_fora, gols_casa) |> 
+  step_impute_mean(all_numeric_predictors()) |> 
+  step_normalize(all_numeric_predictors()) |> 
+  step_pca(all_numeric_predictors(), threshold = 0.80) |> 
+  step_novel(arbitro) |> 
+  step_dummy(all_nominal_predictors())
+```
+
+```{r}
+rf_model <- rand_forest(mode = "classification") |> 
+  set_engine("ranger")
+```
+
+```{r}
+rf_workflow <- workflow() |> 
+  add_recipe(rf_recipe) |> 
+  add_model(rf_model)
+```
+
+```{r}
+fit <- rf_workflow |> 
+  fit(data = train_test$train)
+```
+
+```{r}
+rf_preds <- predict(fit, train_test$test) |> 
+  bind_cols(train_test$test |> select(resultado)) |> 
+  mutate(resultado = as.factor(resultado))
+
+# RMSE
+accuracy(rf_preds, truth = resultado, estimate = .pred_class)
+```
+
