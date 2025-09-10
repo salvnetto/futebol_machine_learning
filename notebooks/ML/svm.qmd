@@ -1,0 +1,102 @@
+```{r}
+library(tidyverse)
+library(here)
+library(tidymodels)
+
+set.seed(123)
+```
+
+```{r}
+liga <- paste0("serie_a", ".rds")
+
+train_test <- readRDS(here("data", "train_test", liga))
+
+train <- train_test$train |> 
+  filter(temporada %in% c("2024", "2024-2025"))
+```
+
+```{r}
+basic_recipe <- recipe(resultado ~ ., data = train) |> 
+  step_rm(match_id, data, gols_fora, gols_casa, temporada) |> 
+  step_impute_mode(all_nominal_predictors()) |> 
+  step_impute_mean(all_numeric_predictors()) |> 
+  step_zv(all_predictors()) |> 
+  step_normalize(all_numeric_predictors()) |> 
+  # step_pca(all_numeric_predictors(), threshold = 0.80) |>
+  step_novel(arbitro, hora) |> 
+  step_dummy(all_nominal_predictors())
+```
+
+```{r}
+rbf_model <- svm_rbf(
+  mode = "classification",
+  #cost = tune(),
+  #rbf_sigma = tune()
+) |> 
+  set_engine("kernlab")
+```
+
+```{r}
+rbf_workflow <- workflow() |> 
+  add_recipe(basic_recipe) |> 
+  add_model(rbf_model)
+```
+
+```{r}
+# rbf_set <- extract_parameter_set_dials(rbf_workflow) |>
+#   update(
+#     #mtry = mtry(range = c(20, 70)),
+#   )
+```
+
+```{r}
+# cv_folds <- rolling_origin(
+#   train,
+#   initial = floor(0.7 * nrow(train)), # first 70% as training
+#   assess = 50,       # validation set size (e.g., 50 matches)
+#   cumulative = TRUE,  # training grows with each resample
+#   skip = 50
+# )
+#  
+# rbf_tuned <- rbf_workflow |>
+#   tune_bayes(
+#     resamples = cv_folds,
+#     param_info = rbf_set,
+#     initial = 10,
+#     iter = 20,
+#     metrics = metric_set(accuracy),
+#     control = control_bayes(no_improve = 10, verbose = TRUE, parallel_over = "resamples")
+#   )
+```
+
+```{r}
+# rbf_tuned |> show_best("accuracy")
+```
+
+```{r}
+# best_params <- select_best(rbf_tuned, "accuracy")
+# final_wf <- finalize_workflow(rbf_workflow, best_params)
+```
+
+```{r}
+final_fit <- rbf_workflow |>
+  fit(data = train)
+# final_fit <- final_wf |>
+#   fit(data = train)
+```
+
+```{r}
+rbf_preds <- predict(final_fit, train_test$test) |> 
+  bind_cols(train_test$test |> select(resultado, rodada)) |> 
+  mutate(resultado = as.factor(resultado))
+
+# RMSE
+accuracy(rbf_preds, truth = resultado, estimate = .pred_class)
+```
+
+```{r}
+rbf_preds |> 
+  group_by(rodada) |> 
+  accuracy(truth = resultado, estimate = .pred_class)
+```
+

@@ -1,0 +1,96 @@
+```{r}
+library(tidyverse)
+library(here)
+library(tidymodels)
+library(poissonreg)
+
+set.seed(123)
+```
+
+```{r}
+liga <- paste0("brasileirao_a", ".rds")
+
+train_test <- readRDS(here("data", "train_test", liga))
+
+train <- train_test$train |> 
+  filter(temporada %in% c("2024", "2024-2025"))
+
+```
+
+```{r}
+glm_recipe <- recipe(~ ., data = train) |> 
+  step_rm(match_id, data, resultado, temporada) |> 
+  step_impute_mode(all_nominal_predictors()) |> 
+  step_impute_mean(all_numeric_predictors()) |> 
+  step_zv(all_predictors()) |> 
+  step_novel(arbitro, hora)# |> 
+  #step_dummy(all_nominal_predictors()) 
+```
+
+```{r}
+glm_model <- poisson_reg() |> 
+  set_engine("glm")
+```
+
+```{r}
+# Workflow for gols_casa
+workflow_casa <- workflow() |> 
+  add_recipe(glm_recipe |> update_role(gols_casa, new_role = "outcome")) |> 
+  add_model(glm_model)
+
+# Workflow for gols_fora
+workflow_fora <- workflow() |> 
+  add_recipe(glm_recipe |> update_role(gols_fora, new_role = "outcome")) |> 
+  add_model(glm_model)
+
+```
+
+```{r}
+casa_fit <- workflow_casa |> fit(data = train)
+fora_fit <- workflow_fora |> fit(data = train)
+```
+
+```{r}
+casa_preds <- predict(casa_fit, train_test$test) |> 
+  rename(pred_gols_casa = .pred_res)
+
+fora_preds <- predict(fora_fit, train_test$test) |> 
+  rename(pred_gols_fora = .pred_res)
+
+preds <- bind_cols(
+  train_test$test |> select(gols_casa, gols_fora, rodada),
+  casa_preds, fora_preds
+)
+```
+
+```{r}
+preds |> 
+  metrics(truth = gols_casa, estimate = pred_gols_casa)
+
+preds |> 
+  metrics(truth = gols_fora, estimate = pred_gols_fora)
+```
+
+```{r}
+preds <- preds |> 
+  mutate(
+    result_truth = case_when(
+      gols_casa > gols_fora ~ "W",
+      gols_casa < gols_fora ~ "L",
+      TRUE ~ "D"
+    ) |> factor(levels = c("W", "D", "L")),
+    
+    result_pred = case_when(
+      pred_gols_casa > pred_gols_fora ~ "W",
+      pred_gols_casa < pred_gols_fora ~ "L",
+      TRUE ~ "D"
+    ) |> factor(levels = c("W", "D", "L"))
+  )
+
+preds |> accuracy(truth = result_truth, estimate = result_pred)
+
+preds |> 
+  group_by(rodada) |> 
+  accuracy(truth = result_truth, estimate = result_pred)
+```
+

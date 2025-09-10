@@ -1,13 +1,9 @@
 {
     "sortOrder": [
         {
-            "columnIndex": 1,
-            "ascending": false
-        },
-        {
             "columnIndex": 2,
-            "ascending": true
+            "ascending": false
         }
     ],
-    "path": "~/Futebol/1_semana/machine_learning/notebooks"
+    "path": "~/Futebol/1_semana"
 }

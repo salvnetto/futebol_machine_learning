@@ -1,0 +1,21 @@
+
+```{r}
+library(tidyverse)
+library(here)
+```
+
+```{r}
+model <- "bivariated_poisson"
+league <- "serie_a"
+
+data <- readRDS(here("results", "Stan", paste0(model, "_", league, ".rds")))
+```
+
+```{r}
+data$pred_success |> mean()
+
+data |> 
+  group_by(rodada) |> 
+  summarise(acc = mean(pred_success))
+```
+

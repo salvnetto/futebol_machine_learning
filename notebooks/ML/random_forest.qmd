@@ -1,0 +1,120 @@
+```{r}
+library(tidyverse)
+library(here)
+library(tidymodels)
+
+set.seed(123)
+```
+
+```{r}
+liga <- paste0("brasileirao_a", ".rds")
+
+train_test <- readRDS(here("data", "train_test", liga))
+
+train <- train_test$train |> 
+  filter(temporada %in% c("2023", "2024-2025"))
+
+test <- train_test$test |> 
+  filter(temporada %in% c("2023", "2024-2025"))
+```
+
+```{r}
+rf_recipe <- recipe(resultado ~ ., data = train) |> 
+  step_rm(match_id, temporada, data, gols_fora, gols_casa) |> 
+  step_impute_mode(all_nominal_predictors()) |> 
+  step_impute_mean(all_numeric_predictors()) |> 
+  # step_zv(all_numeric_predictors()) |>
+  # step_normalize(all_numeric_predictors()) |>
+  # step_pca(all_numeric_predictors(), threshold = 0.80) |>
+  step_novel(arbitro, hora) |> 
+  step_dummy(all_nominal_predictors())
+```
+
+```{r}
+rf_model <- rand_forest(
+  mode = "classification",
+  mtry = 60,
+  min_n = 5,
+  trees = 2500
+) |> 
+  set_engine("ranger", num.threads = 1, importance = "impurity")
+```
+
+```{r}
+rf_workflow <- workflow() |> 
+  add_recipe(rf_recipe) |> 
+  add_model(rf_model)
+```
+
+```{r}
+# rf_set <- extract_parameter_set_dials(rf_workflow) |> 
+#   update(
+#     mtry = mtry(range = c(20, 70)),
+#     min_n = min_n(range = c(1, 10)),
+#     trees = trees(range = c(1500, 4000))
+#   )
+# 
+# rf_grid <- grid_regular(rf_set, levels = 3)
+```
+
+```{r}
+# cv_folds <- rolling_origin(
+#   train,
+#   initial = floor(0.7 * nrow(train)), # first 70% as training
+#   assess = 50,       # validation set size (e.g., 50 matches)
+#   cumulative = TRUE,  # training grows with each resample
+#   skip = 100
+# )
+# 
+# rf_tuned <- rf_workflow |> 
+#   tune_grid(
+#     resamples = cv_folds,
+#     grid = rf_grid,
+#     metrics = metric_set(accuracy),
+#     control = control_grid(verbose = TRUE, parallel_over = "resamples")
+#   )
+```
+
+```{r}
+# rf_tuned |> show_best(metric = "accuracy")
+```
+
+```{r}
+# best_params <- select_best(rf_tuned, metric = "accuracy")
+# final_wf <- finalize_workflow(rf_workflow, best_params)
+```
+
+```{r}
+final_fit <- rf_workflow |>
+  fit(data = train)
+# final_fit <- final_wf |>
+#   fit(data = train)
+```
+
+```{r}
+final_fit$fit$fit$fit$variable.importance |> 
+  enframe(name = "variable", value = "importance") |> 
+  arrange(desc(importance))
+
+```
+
+
+```{r}
+rf_preds <- predict(final_fit, train) |> 
+  bind_cols(train |> select(resultado, rodada)) |> 
+  mutate(resultado = as.factor(resultado))
+
+# RMSE
+accuracy(rf_preds, truth = resultado, estimate = .pred_class)
+```
+
+```{r}
+rf_preds |> 
+  group_by(rodada) |> 
+  accuracy(truth = resultado, estimate = .pred_class)
+```
+
+```{r}
+
+```
+

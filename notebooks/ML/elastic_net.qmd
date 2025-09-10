@@ -1,0 +1,229 @@
+```{r}
+library(tidyverse)
+library(here)
+library(tidymodels)
+library(poissonreg)
+
+set.seed(123)
+```
+
+```{r}
+liga <- paste0("serie_a", ".rds")
+
+train_test <- readRDS(here("data", "train_test", liga))
+
+train <- train_test$train |> 
+  filter(temporada %in% c("2024", "2024-2025"))
+```
+
+# Classification
+
+```{r}
+basic_recipe <- recipe(resultado ~ ., data = train) |> 
+  step_rm(match_id, data, gols_fora, gols_casa, temporada) |> 
+  step_impute_mode(all_nominal_predictors()) |> 
+  step_impute_mean(all_numeric_predictors()) |> 
+  step_novel(arbitro, hora) |> 
+  step_dummy(all_nominal_predictors()) 
+```
+
+
+```{r}
+enet_model <- multinom_reg(
+  mode = "classification",
+  penalty = 15,   # λ
+  mixture = 1#tune()    # α: 0 = ridge, 1 = lasso
+) |> 
+  set_engine("glmnet")
+```
+
+```{r}
+enet_workflow <- workflow() |> 
+  add_recipe(basic_recipe) |> 
+  add_model(enet_model)
+```
+
+```{r}
+# enet_set <- extract_parameter_set_dials(enet_workflow) |> 
+#   update(
+#     penalty = penalty(range = c(-4, 0), trans = scales::log10_trans()), # log-scale
+#     mixture = mixture(range = c(0, 1))
+#   )
+```
+
+```{r}
+# cv_folds <- rolling_origin(
+#   train_test$train,
+#   initial = floor(0.7 * nrow(train_test$train)), # first 70% as training
+#   assess = 50,       # validation set size (e.g., 50 matches)
+#   cumulative = TRUE,  # training grows with each resample
+#   skip = 50
+# )
+#  
+# enet_tuned <- enet_workflow |> 
+#   tune_bayes(
+#     resamples = cv_folds,
+#     param_info = enet_set,
+#     initial = 10,
+#     iter = 20,
+#     metrics = metric_set(accuracy),
+#     control = control_bayes(no_improve = 10, verbose = TRUE, parallel_over = "resamples")
+#   )
+```
+
+```{r}
+# enet_tuned |> show_best("accuracy")
+# 
+# best_params <- select_best(enet_tuned, "accuracy")
+# 
+# final_wf <- finalize_workflow(enet_workflow, best_params)
+
+# final_fit <- final_wf |> 
+#   fit(data = train_test$train)
+
+final_fit <- enet_workflow |>
+  fit(data = train)
+```
+
+```{r}
+enet_preds <- predict(final_fit, train_test$test) |> 
+  bind_cols(train_test$test |> select(resultado, rodada)) |> 
+  mutate(resultado = as.factor(resultado))
+
+accuracy(enet_preds, truth = resultado, estimate = .pred_class)
+```
+
+```{r}
+enet_preds |> 
+  group_by(rodada) |> 
+  accuracy(truth = resultado, estimate = .pred_class)
+```
+
+
+# Regression
+
+```{r}
+enet_recipe <- recipe(~ ., data = train_test$train) |> 
+  step_rm(match_id, data, resultado) |> 
+  step_impute_mode(all_nominal_predictors()) |> 
+  step_impute_mean(all_numeric_predictors()) |> 
+  step_novel(arbitro) |> 
+  step_dummy(all_nominal_predictors()) 
+```
+
+```{r}
+enet_model <- poisson_reg(
+  mode = "regression",
+  penalty = 1,#tune(),  # λ
+  mixture = 0,#tune()   # α
+) |> 
+  set_engine("glmnet")
+```
+
+```{r}
+# Workflow for gols_casa
+workflow_casa <- workflow() |> 
+  add_recipe(enet_recipe |> update_role(gols_casa, new_role = "outcome")) |> 
+  add_model(enet_model)
+
+# Workflow for gols_fora
+workflow_fora <- workflow() |> 
+  add_recipe(enet_recipe |> update_role(gols_fora, new_role = "outcome")) |> 
+  add_model(enet_model)
+
+```
+
+```{r}
+# enet_set <- extract_parameter_set_dials(enet_model) |> 
+#   update(
+#     #penalty = penalty(range = c(-4, 0), trans = scales::log10_trans()),
+#     mixture = 0#mixture(range = c(0, 1))
+#   )
+```
+
+```{r}
+# cv_folds <- rolling_origin(
+#   train_test$train,
+#   initial = floor(0.7 * nrow(train_test$train)),
+#   assess = 50,
+#   cumulative = TRUE,
+#   skip = 50
+# )
+
+```
+
+```{r}
+# gols_casa
+# tuned_casa <- workflow_casa |> 
+#   tune_bayes(
+#     resamples = cv_folds,
+#     param_info = enet_set,
+#     initial = 10,
+#     iter = 20,
+#     metrics = metric_set(rmse, rsq),
+#     control = control_bayes(no_improve = 10, verbose = TRUE)
+#   )
+# 
+# # gols_fora
+# tuned_fora <- workflow_fora |> 
+#   tune_bayes(
+#     resamples = cv_folds,
+#     param_info = enet_set,
+#     initial = 10,
+#     iter = 20,
+#     metrics = metric_set(rmse, rsq),
+#     control = control_bayes(no_improve = 10, verbose = TRUE)
+#   )
+
+```
+
+```{r}
+# best_casa <- select_best(tuned_casa, "rmse")
+# best_fora <- select_best(tuned_fora, "rmse")
+# 
+# final_casa <- finalize_workflow(workflow_casa, best_casa) |> fit(data = train_test$train)
+# final_fora <- finalize_workflow(workflow_fora, best_fora) |> fit(data = train_test$train)
+final_casa <- workflow_casa |> fit(data = train_test$train)
+final_fora <- workflow_fora |> fit(data = train_test$train)
+
+
+```
+
+```{r}
+preds_casa <- predict(final_casa, train_test$test) |> rename(.pred_casa = .pred)
+preds_fora <- predict(final_fora, train_test$test) |> rename(.pred_fora = .pred)
+
+enet_preds <- bind_cols(preds_casa, preds_fora, train_test$test |> select(gols_casa, gols_fora, rodada))
+```
+
+```{r}
+rmse(enet_preds, truth = gols_casa, estimate = .pred_casa)
+rmse(enet_preds, truth = gols_fora, estimate = .pred_fora)
+
+rsq(enet_preds, truth = gols_casa, estimate = .pred_casa)
+rsq(enet_preds, truth = gols_fora, estimate = .pred_fora)
+```
+
+```{r}
+preds <- enet_preds |> 
+  mutate(
+    result_truth = case_when(
+      gols_casa > gols_fora ~ "W",
+      gols_casa < gols_fora ~ "L",
+      TRUE ~ "D"
+    ) |> factor(levels = c("W", "D", "L")),
+    
+    result_pred = case_when(
+      .pred_casa > .pred_fora ~ "W",
+      .pred_casa < .pred_fora ~ "L",
+      TRUE ~ "D"
+    ) |> factor(levels = c("W", "D", "L"))
+  )
+
+preds |> accuracy(truth = result_truth, estimate = result_pred)
+
+preds |> 
+  group_by(rodada) |> 
+  accuracy(truth = result_truth, estimate = result_pred)
+```
+
